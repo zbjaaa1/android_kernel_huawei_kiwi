@@ -1022,13 +1022,54 @@ int mdss_mdp_perf_bw_check(struct mdss_mdp_ctl *ctl,
 	return 0;
 }
 
+static u32 mdss_mdp_get_max_pipe_bw(struct mdss_mdp_pipe *pipe)
+{
+
+	struct mdss_mdp_ctl *ctl = pipe->mixer_left->ctl;
+	struct mdss_max_bw_settings *max_per_pipe_bw_settings;
+	u32 flags = 0, threshold = 0, panel_orientation;
+	u32 i, max = INT_MAX;
+
+	if (!ctl->mdata->mdss_per_pipe_bw_cnt
+			&& !ctl->mdata->max_per_pipe_bw_settings)
+		return 0;
+
+	panel_orientation = ctl->mfd->panel_orientation;
+	max_per_pipe_bw_settings = ctl->mdata->max_per_pipe_bw_settings;
+
+	/* Check for panel orienatation */
+	panel_orientation = ctl->mfd->panel_orientation;
+	if (panel_orientation & MDP_FLIP_LR)
+		flags |= MDSS_MAX_BW_LIMIT_HFLIP;
+	if (panel_orientation & MDP_FLIP_UD)
+		flags |= MDSS_MAX_BW_LIMIT_VFLIP;
+
+	/* check for Hflip/Vflip in pipe */
+	if (pipe->flags & MDP_FLIP_LR)
+		flags |= MDSS_MAX_BW_LIMIT_HFLIP;
+	if (pipe->flags & MDP_FLIP_UD)
+		flags |= MDSS_MAX_BW_LIMIT_VFLIP;
+
+	flags |= ctl->mdata->bw_mode_bitmap;
+
+	for (i = 0; i < ctl->mdata->mdss_per_pipe_bw_cnt; i++) {
+		if (max_per_pipe_bw_settings[i].mdss_max_bw_mode & flags) {
+			threshold = max_per_pipe_bw_settings[i].mdss_max_bw_val;
+			if (threshold < max)
+				max = threshold;
+		}
+	}
+
+	return max;
+}
+
 int mdss_mdp_perf_bw_check_pipe(struct mdss_mdp_perf_params *perf,
 		struct mdss_mdp_pipe *pipe)
 {
 	struct mdss_data_type *mdata = pipe->mixer_left->ctl->mdata;
 	struct mdss_mdp_ctl *ctl = pipe->mixer_left->ctl;
 	u32 vbp_fac, threshold;
-	u64 prefill_bw, pipe_bw;
+	u64 prefill_bw, pipe_bw, max_pipe_bw;
 
 	/* we only need bandwidth check on real-time clients (interfaces) */
 	if (ctl->intf_type == MDSS_MDP_NO_INTF)
@@ -1044,6 +1085,11 @@ int mdss_mdp_perf_bw_check_pipe(struct mdss_mdp_perf_params *perf,
 	pipe_bw = DIV_ROUND_UP_ULL(pipe_bw, 1000);
 
 	threshold = mdata->max_bw_per_pipe;
+	max_pipe_bw = mdss_mdp_get_max_pipe_bw(pipe);
+
+	if (max_pipe_bw && (max_pipe_bw < threshold))
+		threshold = max_pipe_bw;
+
 	pr_debug("bw=%llu threshold=%u\n", pipe_bw, threshold);
 
 	if (threshold && pipe_bw > threshold) {
